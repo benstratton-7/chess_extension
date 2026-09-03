@@ -1,0 +1,18 @@
+{
+  "type": "module",
+  "scripts": {
+    "clean": "node -e \"import('node:fs').then(fs => fs.rmSync('dist', { recursive: true, force: true }))\"",
+    "cb": "npm run clean && npm run build",
+    "build": "vite build",
+    "dev": "vite build --watch"
+  },
+  "dependencies": {
+    "chrome-types": "^0.1.442"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.7.1",
+    "@types/chrome": "^0.2.8",
+    "typescript": "^5.6.3",
+    "vite": "^8.2.2"
+  }
+}

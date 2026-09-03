@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Ben's Chess Extension",
+  "version": "1.0",
+  "description": "Makes the UI on chess.com a bit better",
+  "permissions": ["storage"],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "assets/grey-rook2-16.png",
+        "assets/grey-rook2-32.png",
+        "assets/grey-rook2-48.png",
+        "assets/grey-rook2-128.png"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/index.html",
+    "default_icon": {
+      "16": "assets/rook2-16.png",
+      "32": "assets/rook2-32.png",
+      "48": "assets/rook2-48.png",
+      "128": "assets/rook2-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "scripts/background.ts"
+  }
+}

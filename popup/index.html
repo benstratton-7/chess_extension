@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Popup</title>
+    <style>
+      body {
+        width: 220px;
+        font-family: "Segoe UI", sans-serif;
+        padding: 12px;
+      }
+
+      h1 {
+        font-size: 16px;
+        margin: 0 0 10px;
+      }
+
+      #status {
+        margin: 0 0 12px;
+        font-size: 13px;
+        color: #374151;
+      }
+
+      #toggle-button {
+        width: 100%;
+        padding: 8px 10px;
+        border: 0;
+        border-radius: 8px;
+        color: #ffffff;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      #toggle-button.enabled {
+        background: #1f8b4c;
+      }
+
+      #toggle-button.disabled {
+        background: #3a312ee7;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Chess time!</h1>
+    <p id="status">Loading...</p>
+    <button id="toggle-button" type="button">Toggle</button>
+    <script type="module" src="./popup.ts"></script>
+  </body>
+</html>
