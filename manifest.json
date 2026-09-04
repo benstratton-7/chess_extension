@@ -4,6 +4,14 @@
   "version": "1.0",
   "description": "Makes the UI on chess.com a bit better",
   "permissions": ["storage"],
+  "host_permissions": ["https://*.chess.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://*.chess.com/*"],
+      "js": ["scripts/modifyCoordinates.ts"],
+      "run_at": "document_end"
+    }
+  ],
   "web_accessible_resources": [
     {
       "resources": [

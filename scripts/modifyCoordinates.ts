@@ -1,14 +1,33 @@
 const EXTENSION_ENABLED_KEY = "extensionEnabled";
 const BOARD_SELECTOR = "wc-chess-board.board, wc-chess-board";
 const NATIVE_COORDINATE_SELECTOR = ":scope > svg.coordinates";
+const DEBUG = true;
 
 type BoardOrientation = "white" | "black";
 type ParsedCoordinateText = { x: number; y: number; value: string };
 
 const boardObserverMap = new WeakMap<HTMLElement, MutationObserver>();
 const boardOriginalMarkup = new WeakMap<HTMLElement, string>();
+const boardRenderTimerMap = new WeakMap<HTMLElement, number>();
 let documentObserver: MutationObserver | null = null;
+let documentScanTimer: number | null = null;
+let lastObservedBoardCount: number | null = null;
 let enabled = false;
+type CoordinateWindow = Window & { __ceModifyCoordinatesBooted?: boolean };
+const DOCUMENT_SCAN_DEBOUNCE_MS = 250;
+
+function logDebug(message: string, details?: unknown): void {
+  if (!DEBUG) {
+    return;
+  }
+
+  if (details === undefined) {
+    console.log("[CE modifyCoordinates]", message);
+    return;
+  }
+
+  console.log("[CE modifyCoordinates]", message, details);
+}
 
 function getBoardElements(): HTMLElement[] {
   const allBoards = Array.from(document.querySelectorAll<HTMLElement>(BOARD_SELECTOR));
@@ -138,9 +157,37 @@ function formatCoordValue(value: number): string {
   return Number(value.toFixed(3)).toString();
 }
 
+function isAlreadyRendered(
+  coordinateSvg: SVGElement,
+  coordinates: string[],
+  fontSize: string,
+): boolean {
+  const textNodes = Array.from(coordinateSvg.querySelectorAll<SVGTextElement>("text"));
+  if (textNodes.length !== 64) {
+    return false;
+  }
+
+  for (let index = 0; index < 64; index += 1) {
+    const textNode = textNodes[index];
+    if ((textNode.textContent ?? "") !== coordinates[index]) {
+      return false;
+    }
+
+    if ((textNode.getAttribute("font-size") ?? "") !== fontSize) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function renderInSquareCoordinates(boardElement: HTMLElement): void {
   const coordinateSvg = getCoordinateSvg(boardElement);
   if (!coordinateSvg) {
+    logDebug("Board found but no coordinate SVG present", {
+      boardId: boardElement.id || null,
+      classes: boardElement.className,
+    });
     return;
   }
 
@@ -149,6 +196,16 @@ function renderInSquareCoordinates(boardElement: HTMLElement): void {
   const orientation = detectOrientation(boardElement, coordinateSvg);
   const coordinates = buildCoordinates(orientation);
   const fontSize = inferFontSize(coordinateSvg);
+
+  if (isAlreadyRendered(coordinateSvg, coordinates, fontSize)) {
+    return;
+  }
+
+  logDebug("Rendering board coordinates", {
+    boardId: boardElement.id || null,
+    orientation,
+    fontSize,
+  });
 
   const namespace = "http://www.w3.org/2000/svg";
   const fragment = document.createDocumentFragment();
@@ -176,31 +233,66 @@ function renderInSquareCoordinates(boardElement: HTMLElement): void {
 
   coordinateSvg.replaceChildren(fragment);
   boardElement.setAttribute("data-ce-coordinates-overridden", "true");
+  logDebug("Coordinate SVG replaced with in-square labels", {
+    boardId: boardElement.id || null,
+    labelCount: 64,
+  });
 }
 
 function restoreNativeCoordinates(boardElement: HTMLElement): void {
   const coordinateSvg = getCoordinateSvg(boardElement);
   if (!coordinateSvg) {
+    logDebug("Restore skipped because coordinate SVG is missing", {
+      boardId: boardElement.id || null,
+    });
     return;
   }
 
   const originalMarkup = boardOriginalMarkup.get(boardElement);
   if (!originalMarkup) {
+    logDebug("Restore skipped because original markup is unavailable", {
+      boardId: boardElement.id || null,
+    });
     return;
   }
 
   coordinateSvg.innerHTML = originalMarkup;
   boardElement.removeAttribute("data-ce-coordinates-overridden");
+  logDebug("Native coordinates restored", { boardId: boardElement.id || null });
+}
+
+function scheduleBoardRender(boardElement: HTMLElement): void {
+  if (!enabled) {
+    return;
+  }
+
+  const previousTimer = boardRenderTimerMap.get(boardElement);
+  if (previousTimer !== undefined) {
+    window.clearTimeout(previousTimer);
+  }
+
+  const timer = window.setTimeout(() => {
+    boardRenderTimerMap.delete(boardElement);
+    renderInSquareCoordinates(boardElement);
+  }, 80);
+
+  boardRenderTimerMap.set(boardElement, timer);
 }
 
 function renderAllBoards(): void {
-  for (const boardElement of getBoardElements()) {
+  const boards = getBoardElements();
+  logDebug("Rendering all boards", { count: boards.length, enabled });
+
+  for (const boardElement of boards) {
     renderInSquareCoordinates(boardElement);
   }
 }
 
 function clearAllBoards(): void {
-  for (const boardElement of getBoardElements()) {
+  const boards = getBoardElements();
+  logDebug("Clearing all boards", { count: boards.length });
+
+  for (const boardElement of boards) {
     restoreNativeCoordinates(boardElement);
   }
 }
@@ -218,27 +310,75 @@ function ensureBoardObserver(boardElement: HTMLElement): void {
     return;
   }
 
-  const observer = new MutationObserver(() => {
+  logDebug("Attaching board observer", {
+    boardId: boardElement.id || null,
+    classes: boardElement.className,
+  });
+
+  const observer = new MutationObserver((mutations) => {
     if (!enabled) {
       return;
     }
 
-    renderInSquareCoordinates(boardElement);
+    const coordinateSvg = getCoordinateSvg(boardElement);
+    const shouldRender = mutations.some((mutation) => {
+      if (mutation.type === "attributes" && mutation.target === boardElement) {
+        return true;
+      }
+
+      if (!coordinateSvg) {
+        return mutation.type === "childList";
+      }
+
+      if (mutation.target === coordinateSvg || coordinateSvg.contains(mutation.target)) {
+        return false;
+      }
+
+      return mutation.type === "childList";
+    });
+
+    if (!shouldRender) {
+      return;
+    }
+
+    scheduleBoardRender(boardElement);
   });
 
   observer.observe(boardElement, {
     childList: true,
-    subtree: true,
+    subtree: false,
     attributes: true,
+    attributeFilter: ["class", "style"],
   });
 
   boardObserverMap.set(boardElement, observer);
 }
 
 function observeBoards(): void {
-  for (const boardElement of getBoardElements()) {
+  const boards = getBoardElements();
+  if (lastObservedBoardCount !== boards.length) {
+    logDebug("Observing boards", { count: boards.length, previousCount: lastObservedBoardCount });
+    lastObservedBoardCount = boards.length;
+  }
+
+  for (const boardElement of boards) {
     ensureBoardObserver(boardElement);
   }
+}
+
+function scheduleObserveBoards(): void {
+  if (!enabled) {
+    return;
+  }
+
+  if (documentScanTimer !== null) {
+    return;
+  }
+
+  documentScanTimer = window.setTimeout(() => {
+    documentScanTimer = null;
+    observeBoards();
+  }, DOCUMENT_SCAN_DEBOUNCE_MS);
 }
 
 function ensureDocumentObserver(): void {
@@ -246,9 +386,10 @@ function ensureDocumentObserver(): void {
     return;
   }
 
+  logDebug("Attaching document observer");
+
   documentObserver = new MutationObserver(() => {
-    observeBoards();
-    rerenderActiveBoards();
+    scheduleObserveBoards();
   });
 
   documentObserver.observe(document.body, {
@@ -258,13 +399,20 @@ function ensureDocumentObserver(): void {
 }
 
 function applyEnabledState(nextEnabled: boolean): void {
+  logDebug("Applying enabled state", { previous: enabled, next: nextEnabled });
   enabled = nextEnabled;
 
   if (enabled) {
+    lastObservedBoardCount = null;
     ensureDocumentObserver();
     observeBoards();
     renderAllBoards();
     return;
+  }
+
+  if (documentScanTimer !== null) {
+    window.clearTimeout(documentScanTimer);
+    documentScanTimer = null;
   }
 
   clearAllBoards();
@@ -272,6 +420,10 @@ function applyEnabledState(nextEnabled: boolean): void {
 
 function initializeFromStorage(): void {
   chrome.storage.local.get(EXTENSION_ENABLED_KEY, (result) => {
+    logDebug("Initial state read from storage", {
+      raw: result[EXTENSION_ENABLED_KEY],
+      enabled: Boolean(result[EXTENSION_ENABLED_KEY]),
+    });
     applyEnabledState(Boolean(result[EXTENSION_ENABLED_KEY]));
   });
 }
@@ -281,6 +433,11 @@ function setupStorageListener(): void {
     if (areaName !== "local" || !changes[EXTENSION_ENABLED_KEY]) {
       return;
     }
+
+    logDebug("Storage change received", {
+      oldValue: changes[EXTENSION_ENABLED_KEY].oldValue,
+      newValue: changes[EXTENSION_ENABLED_KEY].newValue,
+    });
 
     applyEnabledState(Boolean(changes[EXTENSION_ENABLED_KEY].newValue));
   });
@@ -297,18 +454,31 @@ function setupRuntimeMessageListener(): void {
       return;
     }
 
+    logDebug("Refresh message received", payload);
+
     rerenderActiveBoards();
   });
 }
 
 function boot(): void {
+  logDebug("Booting modifyCoordinates script", { readyState: document.readyState, href: window.location.href });
   setupStorageListener();
   setupRuntimeMessageListener();
   initializeFromStorage();
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", boot, { once: true });
+const coordinateWindow = window as CoordinateWindow;
+
+if (!coordinateWindow.__ceModifyCoordinatesBooted) {
+  coordinateWindow.__ceModifyCoordinatesBooted = true;
+  logDebug("First-time bootstrap");
+
+  if (document.readyState === "loading") {
+    logDebug("Document loading; waiting for DOMContentLoaded");
+    document.addEventListener("DOMContentLoaded", boot, { once: true });
+  } else {
+    boot();
+  }
 } else {
-  boot();
+  logDebug("Bootstrap skipped because script is already initialized");
 }
